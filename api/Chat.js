@@ -1,5 +1,6 @@
-export default async function handler(req, res) {
-  // CORS — autoriser toutes les origines
+const https = require('https');
+
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -10,31 +11,49 @@ export default async function handler(req, res) {
   try {
     const { messages, system } = req.body;
 
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        max_tokens: 800,
-        temperature: 0.8,
-        messages: [
-          { role: 'system', content: system },
-          ...messages
-        ]
-      })
+    const body = JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 800,
+      temperature: 0.8,
+      messages: [
+        { role: 'system', content: system },
+        ...messages
+      ]
     });
 
-    const data = await response.json();
-    if (data.error) return res.status(500).json({ error: data.error.message });
+    const reply = await new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'api.groq.com',
+        path: '/openai/v1/chat/completions',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+          'Content-Length': Buffer.byteLength(body)
+        }
+      };
 
-    const reply = data.choices?.[0]?.message?.content || '';
+      const request = https.request(options, (response) => {
+        let data = '';
+        response.on('data', chunk => data += chunk);
+        response.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.error) return reject(new Error(parsed.error.message));
+            resolve(parsed.choices?.[0]?.message?.content || '');
+          } catch (e) { reject(e); }
+        });
+      });
+
+      request.on('error', reject);
+      request.write(body);
+      request.end();
+    });
+
     return res.status(200).json({ reply });
 
   } catch (err) {
-    console.error('API error:', err);
+    console.error('Erreur:', err.message);
     return res.status(500).json({ error: err.message });
   }
-    }
+};
